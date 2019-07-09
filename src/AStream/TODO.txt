@@ -1,0 +1,22 @@
+Ideas:
+
+Server:
+1. Modify code to create segements of variable size (1 sec, 2 sec)
+   Bent04 which is used to create the segments can be used
+   to segment the media file into variable sizes.
+
+2. Check for HTTP 1.1 persistent connections for different segments being transmitted over the same TCP connection
+   urllib2.urlopen uses HTTP/1.1 which uses HTTP persistent
+   connections by default.
+
+Client:
+
+1. Can we use the beforehand knowledge of the segment sizes in our decision to pick the next representation?
+
+
+
+
+Code:
+
+
+1. Change the Class object for media in the read_mpd file to dictionaries
