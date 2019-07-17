@@ -106,11 +106,12 @@ func (p *Packet) GetCopyFrames() []wire.Frame {
 	return copyFrames
 }
 
-// IsDupDropable returns a slice with all contained frames that can be duplicated
-func (p *Packet) IsDupDropable() bool {
+// IsDupDroppable returns if the Packet can be dropped from a path's history,
+// after it was ACKed on another path.
+func (p *Packet) IsDupDroppable() bool {
 
 	for _, f := range p.Frames {
-		// Frames suitable for MP-duplication
+		// Frames which can be dropped, when there duplicate has already been received
 		switch f.(type) {
 		case *wire.StreamFrame:
 			continue

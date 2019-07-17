@@ -82,7 +82,7 @@ type sentPacketHandler struct {
 	// The alarm timeout
 	alarm time.Time
 
-	pathID protocol.PathID
+	pathID        protocol.PathID
 	onAckCallback func(protocol.PathID, protocol.PacketNumber)
 
 	packets              uint64
@@ -98,7 +98,7 @@ func (h *sentPacketHandler) GetCongestionWindow() uint64 {
 // NewSentPacketHandler creates a new sentPacketHandler
 func NewSentPacketHandler(rttStats *congestion.RTTStats, cong congestion.SendAlgorithm, onRTOCallback func(time.Time) bool,
 	pathID protocol.PathID, onAckCallback func(protocol.PathID, protocol.PacketNumber)) SentPacketHandler {
-	
+
 	var congestionControl congestion.SendAlgorithm
 
 	if cong != nil {
@@ -119,8 +119,8 @@ func NewSentPacketHandler(rttStats *congestion.RTTStats, cong congestion.SendAlg
 		rttStats:           rttStats,
 		congestion:         congestionControl,
 		onRTOCallback:      onRTOCallback,
-		pathID: 			pathID,
-		onAckCallback:		onAckCallback,
+		pathID:             pathID,
+		onAckCallback:      onAckCallback,
 	}
 }
 
