@@ -92,7 +92,11 @@ type sentPacketHandler struct {
 }
 
 func (h *sentPacketHandler) GetCongestionWindow() uint64 {
-	return uint64(h.congestion.GetCongestionWindow()) / 1460
+	return uint64(h.congestion.GetCongestionWindow())
+}
+
+func (h *sentPacketHandler) GetBytesInFlight() uint64 {
+	return uint64(h.bytesInFlight)
 }
 
 // NewSentPacketHandler creates a new sentPacketHandler

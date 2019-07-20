@@ -178,7 +178,11 @@ func logReceivings(ticker *time.Ticker, stopChannel chan struct{}) {
 
 				// Open log file
 				filename := "Client" + "_recv.log"
-				logFile, _ = os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				var err error
+				logFile, err = os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				if err != nil {
+					return
+				}
 			}
 
 			// Time measuring

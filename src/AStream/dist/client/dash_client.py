@@ -438,6 +438,7 @@ def start_playback_smart(dp_object, domain, playback_type=None, download=False, 
         config_dash.LOG.critical("Selected mean bitrate: {} KBits".format(overall_avg_selected_rate/(overall_dwn_segments*1000)))
         config_dash.LOG.critical("Mean downrate: {} KBits".format(overall_avg_dwn_rate/(overall_dwn_segments*1000)))
         config_dash.LOG.critical("Mean download time: {} s".format(overall_avg_dwn_time/overall_dwn_segments))
+        config_dash.LOG.critical("Interruptions: {}".format(config_dash.JSON_HANDLE['playback_info']['interruptions']['count']))
 
     # waiting for the player to finish playing
     while dash_player.playback_state not in dash_buffer.EXIT_STATES:

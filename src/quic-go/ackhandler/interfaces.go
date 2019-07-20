@@ -30,6 +30,7 @@ type SentPacketHandler interface {
 
 	GetStatistics() (uint64, uint64, uint64, uint64)
 	GetCongestionWindow() uint64
+	GetBytesInFlight() uint64
 	RemovePacketByNumber(protocol.PacketNumber) bool
 }
 
