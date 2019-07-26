@@ -12,14 +12,6 @@ import (
 	"github.com/lucas-clemente/quic-go/internal/wire"
 )
 
-const (
-	// epsilon parameter (utilRepair Scheduler)
-	//epsilon = 0.9
-
-	contendenceResistance = 10
-	performanceExcel      = 4.0
-)
-
 var (
 	// SchedulerAlgorithm is the algorithm for packet -> path scheduling
 	SchedulerAlgorithm string
@@ -66,11 +58,13 @@ type scheduler struct {
 
 	// Track which path was used for last schedule
 	lastPath *path
-	// Path which scheduler might consider as best
-	bestPath *path
-	// bestContendenceCount count contendences on considered best path
-	bestContendenceCount int
-	bestTP               float64
+	// bestTP keeps track of throughput from best path
+	bestTP float64
+
+	// Count the number of lower RTT path selection for debugging purposes in utilRepair
+	lowerRTTSchedules uint64
+	// Count the number of path switches by scheduler decision
+	pathSwitches uint64
 
 	// Paths for redundant resending
 	redundantPaths []*path
@@ -245,6 +239,7 @@ pathLoop:
 	return selectedPath
 }
 
+// utilRepair scheduler V0.3
 func (sch *scheduler) selectPathUtilRepair(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) *path {
 
 	var maxPath *path
@@ -263,7 +258,7 @@ func (sch *scheduler) selectPathUtilRepair(s *session, hasRetransmission bool, h
 pathLoop:
 	for pathID, pth := range s.paths {
 		// If this path is potentially failed, do not consider it for sending
-		if pth.potentiallyFailed.Get() {
+		if pth == nil || pth.potentiallyFailed.Get() {
 			continue pathLoop
 		}
 
@@ -290,59 +285,57 @@ pathLoop:
 		maxRTT = currentRTT
 	}
 
-	if maxPath == nil {
-		sch.bestPath = nil
-		sch.bestTP = 0.0
+	// To reduce large delays, retransmit redundantly on all free paths
+	if hasRetransmission && hasStreamRetransmission {
+		for _, pStat := range pathStats {
+			if pStat.path.SendingAllowed() {
+				sch.redundantPaths = append(sch.redundantPaths, pStat.path)
+			}
+		}
+		// Return any free to send path
+		if sch.redundantPaths != nil && len(sch.redundantPaths) > 0 {
+			return sch.redundantPaths[0]
+		}
 		return nil
 	}
 
-	// Keep utilizing capacity of best path
-	if maxPath == sch.bestPath && maxPath.SendingAllowed() {
-		sch.bestTP = higherTP
+	// Sanity check
+	if maxPath == nil {
+		return nil
+	}
+
+	// Utilize capacity of best path
+	if maxPath.SendingAllowed() {
 		return maxPath
 	}
 
 	// Best path fully utilized, maybe transmit on another path
-	if maxPath == sch.bestPath && !maxPath.SendingAllowed() {
-		sch.bestTP = higherTP
-		if len(pathStats) > 1 {
-			// Sort paths descending based on throughput
-			sort.SliceStable(pathStats, func(i, j int) bool {
-				return pathStats[i].Throughput > pathStats[j].Throughput
-			})
-			// Exclude maxPath
-			pathStats = pathStats[1:]
+	if len(pathStats) > 1 {
+		// Sort paths descending based on throughput
+		sort.SliceStable(pathStats, func(i, j int) bool {
+			return pathStats[i].Throughput > pathStats[j].Throughput
+		})
+		// Exclude maxPath
+		pathStats = pathStats[1:]
 
-			// Maybe send on path with next highest throughput
-			var lowerRTTpath *path
-			for _, pStat := range pathStats {
-				if pStat.path.SendingAllowed() {
-					if pStat.RTT < maxRTT {
-						// Sending packet on lower RTT path than maxPath will not degradate throughput from maxPath
-						if lowerRTTpath == nil {
-							lowerRTTpath = pStat.path
-						}
-					} else {
-						// Replicate packet on path, which otherwise idles.
-						// Happens on performance domination (maxPath: lower RTT & higher throughput)
-						sch.redundantPaths = append(sch.redundantPaths, pStat.path)
+		// Send on path with next highest throughput
+		var lowerRTTpath *path
+		for _, pStat := range pathStats {
+			if pStat.path.SendingAllowed() {
+				if pStat.RTT < maxRTT {
+					// Sending packet on lower RTT path than maxPath will not degradate throughput from maxPath
+					if lowerRTTpath == nil {
+						lowerRTTpath = pStat.path
+						sch.lowerRTTSchedules++
 					}
+				} else {
+					// Replicate next packet on path, which otherwise idles.
+					// Happens on performance domination (maxPath: lower RTT & higher throughput)
+					sch.redundantPaths = append(sch.redundantPaths, pStat.path)
 				}
 			}
-			return lowerRTTpath
 		}
-	}
-
-	// Slack parameters to reduce oscillation
-	sch.bestContendenceCount++
-	if /*sch.bestContendenceCount > contendenceResistance ||*/ higherTP > performanceExcel*sch.bestTP {
-		// Update bestPath
-		sch.bestPath = maxPath
-		sch.bestContendenceCount = 0
-		sch.bestTP = higherTP
-	}
-	if maxPath.SendingAllowed() {
-		return maxPath
+		return lowerRTTpath
 	}
 
 	return nil
@@ -488,34 +481,6 @@ func (sch *scheduler) performPacketSending(s *session, windowUpdateFrames []*wir
 	// Packet sent, so update its quota
 	sch.quotas[pth.pathID]++
 
-	// Provide some logging if it is the last packet
-	/*for _, frame := range packet.frames {
-		switch frame := frame.(type) {
-		case *wire.StreamFrame:
-			if frame.FinBit {
-				// Last packet to send on the stream, print stats
-				s.pathsLock.RLock()
-				utils.Infof("Info for stream %x of %x", frame.StreamID, s.connectionID)
-				for pathID, pth := range s.paths {
-					if pathID == protocol.InitialPathID && len(s.paths) > 1 {
-						continue
-					}
-					sntPkts, sntRetrans, sntLost, sntBytes := pth.sentPacketHandler.GetStatistics()
-					rcvPkts, rcvBytes := pth.receivedPacketHandler.GetStatistics()
-
-					if sch.lastSentBytes == nil {
-						sch.lastSentBytes = make(map[protocol.PathID]uint64)
-					}
-
-					utils.Infof("Path %x (%v - %v): sent %d (%d B) retrans %d lost %d; rcv %d (%d B) rtt %v\n",
-						pathID, pth.conn.LocalAddr(), pth.conn.RemoteAddr(), sntPkts, sntBytes, sntRetrans, sntLost, rcvPkts, rcvBytes, pth.rttStats.SmoothedRTT())
-				}
-				s.pathsLock.RUnlock()
-			}
-		default:
-		}
-	}*/
-
 	pkt := &ackhandler.Packet{
 		PacketNumber:    packet.number,
 		Frames:          packet.frames,
@@ -606,6 +571,18 @@ func (sch *scheduler) sendPacket(s *session) error {
 		s.pathsLock.RUnlock()
 
 		// Update latest scheduler decision
+		if sch.lastPath != pth {
+			lastID := -1
+			if sch.lastPath != nil {
+				lastID = int(sch.lastPath.pathID)
+			}
+			newID := -1
+			if pth != nil {
+				newID = int(pth.pathID)
+			}
+			sch.pathSwitches++
+			utils.Infof("Switched path %d -> %d", lastID, newID)
+		}
 		sch.lastPath = pth
 
 		// XXX No more path available, should we have a new QUIC error message?
@@ -710,7 +687,11 @@ func (sch *scheduler) redSendPacket(s *session, pth *path, pkt *ackhandler.Packe
 	// Get the frames that should be duplicated
 	redundantFrames := pkt.GetCopyFrames()
 	if redundantFrames == nil {
+		if sch.redundantPaths != nil {
+			utils.Infof("No RED Frames")
+		}
 		// Prevent duplicating empty packets
+		sch.redundantPaths = nil
 		return sch.ackRemainingPaths(s, WUFs)
 	}
 
@@ -731,6 +712,7 @@ func (sch *scheduler) redSendPacket(s *session, pth *path, pkt *ackhandler.Packe
 			frames:          redundantFrames,
 			encryptionLevel: encLevel,
 		}
+		utils.Infof("DUPLICATE packet %d on path %d", pkt.PacketNumber, redPth.pathID)
 
 		// Send duplicated packet
 		err = s.sendPackedPacket(dupPkt, redPth)
@@ -747,8 +729,8 @@ func (sch *scheduler) redSendPacket(s *session, pth *path, pkt *ackhandler.Packe
 		sch.duplicatedPackets++
 		sch.duplicatedStreamBytes += pkt.GetStreamFrameLength()
 	}
-	sch.redundantPaths = nil
 
+	sch.redundantPaths = nil
 	return nil
 }
 
@@ -841,33 +823,33 @@ func (sch *scheduler) LogSendings(s *session, ticker *time.Ticker, stopLog chan 
 // Log statistics on duplicated Packets to file, when a redundant scheduler is used
 func (sch *scheduler) logRedundantStats(s *session) {
 
-	if SchedulerAlgorithm == "oppRedundant" || SchedulerAlgorithm == "utilRepair" {
-		filename := "Server_scheduler_stats.json"
-		os.Remove(filename)
-		logStatsFile, _ := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0644)
+	filename := "Server_scheduler_stats.json"
+	os.Remove(filename)
+	logStatsFile, _ := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0644)
 
-		dupQuota := 0.0
-		if sch.allSntBytes != 0 {
-			dupQuota = float64(sch.duplicatedStreamBytes) / float64(sch.allSntBytes) * 100.0
-		}
-		utils.Debugf("Duplicated Stream Bytes %d (%f %%)", sch.duplicatedStreamBytes, dupQuota)
-
-		dropQuota := 0.0
-		if sch.duplicatedPackets != 0 {
-			dropQuota = float64(sch.droppedDuplicatedPackets) / float64(sch.duplicatedPackets) * 100.0
-		}
-		utils.Debugf("Total redundant droppings %d/%d (%f %%)", sch.droppedDuplicatedPackets, sch.duplicatedPackets, dropQuota)
-
-		logStatsFile.WriteString(
-			"{ \"totalSentPackets\" : " + strconv.FormatUint(s.allSntPackets, 10) +
-				", \"duplicatedPackets\" : " + strconv.FormatUint(sch.duplicatedPackets, 10) +
-				", \"duplicatedDroppedPackets\" : " + strconv.FormatUint(sch.droppedDuplicatedPackets, 10) +
-				", \"duplicatedPacketDropRate\" : " + strconv.FormatFloat(dropQuota, 'g', -1, 64) +
-				", \"totalStreamBytes\" : " + strconv.FormatUint(sch.allSntBytes, 10) +
-				", \"duplicatedStreamBytes\" : " + strconv.FormatUint(sch.duplicatedStreamBytes, 10) +
-				", \"duplicateStreamRate\" : " + strconv.FormatFloat(dupQuota, 'g', -1, 64) +
-				"}")
-
-		logStatsFile.Close()
+	dupQuota := 0.0
+	if sch.allSntBytes != 0 {
+		dupQuota = float64(sch.duplicatedStreamBytes) / float64(sch.allSntBytes) * 100.0
 	}
+	utils.Debugf("Duplicated Stream Bytes %d (%f %%)", sch.duplicatedStreamBytes, dupQuota)
+
+	dropQuota := 0.0
+	if sch.duplicatedPackets != 0 {
+		dropQuota = float64(sch.droppedDuplicatedPackets) / float64(sch.duplicatedPackets) * 100.0
+	}
+	utils.Debugf("Total redundant droppings %d/%d (%f %%)", sch.droppedDuplicatedPackets, sch.duplicatedPackets, dropQuota)
+
+	logStatsFile.WriteString(
+		"{ \"totalSentPackets\" : " + strconv.FormatUint(s.allSntPackets, 10) +
+			", \"duplicatedPackets\" : " + strconv.FormatUint(sch.duplicatedPackets, 10) +
+			", \"duplicatedDroppedPackets\" : " + strconv.FormatUint(sch.droppedDuplicatedPackets, 10) +
+			", \"duplicatedPacketDropRate\" : " + strconv.FormatFloat(dropQuota, 'g', -1, 64) +
+			", \"totalStreamBytes\" : " + strconv.FormatUint(sch.allSntBytes, 10) +
+			", \"duplicatedStreamBytes\" : " + strconv.FormatUint(sch.duplicatedStreamBytes, 10) +
+			", \"duplicateStreamRate\" : " + strconv.FormatFloat(dupQuota, 'g', -1, 64) +
+			", \"lowerRTTSchedules\" : " + strconv.FormatUint(sch.lowerRTTSchedules, 10) +
+			", \"pathSwitches\" : " + strconv.FormatUint(sch.pathSwitches, 10) +
+			"}")
+
+	logStatsFile.Close()
 }

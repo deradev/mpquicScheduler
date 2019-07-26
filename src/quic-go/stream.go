@@ -61,7 +61,7 @@ type stream struct {
 	flowControlManager flowcontrol.FlowControlManager
 
 	// For logging the buffer durations
-	perspective protocol.Perspective
+	perspective   protocol.Perspective
 	logBufferFile *os.File
 }
 
@@ -89,7 +89,7 @@ func newStream(StreamID protocol.StreamID,
 		frameQueue:         newStreamFrameSorter(),
 		readChan:           make(chan struct{}, 1),
 		writeChan:          make(chan struct{}, 1),
-		perspective:		perspective,
+		perspective:        perspective,
 	}
 	s.ctx, s.ctxCancel = context.WithCancel(context.Background())
 	return s
@@ -159,11 +159,13 @@ func (s *stream) Read(p []byte) (int, error) {
 		s.mutex.Unlock()
 
 		// Log that frame was read
-		readTime := time.Now().UnixNano()
-		logLine := strconv.FormatUint(uint64(frame.StreamID), 10) + ";" +
-		strconv.FormatUint(uint64(frame.Offset), 10) + ";" +
-		strconv.FormatInt(readTime, 10) + "\n"
-		s.logBufferFile.WriteString(logLine)
+		if frame != nil {
+			readTime := time.Now().UnixNano()
+			logLine := strconv.FormatUint(uint64(frame.StreamID), 10) + ";" +
+				strconv.FormatUint(uint64(frame.Offset), 10) + ";" +
+				strconv.FormatInt(readTime, 10) + "\n"
+			s.logBufferFile.WriteString(logLine)
+		}
 
 		if err != nil {
 			return bytesRead, err

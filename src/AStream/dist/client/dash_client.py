@@ -439,6 +439,7 @@ def start_playback_smart(dp_object, domain, playback_type=None, download=False, 
         config_dash.LOG.critical("Mean downrate: {} KBits".format(overall_avg_dwn_rate/(overall_dwn_segments*1000)))
         config_dash.LOG.critical("Mean download time: {} s".format(overall_avg_dwn_time/overall_dwn_segments))
         config_dash.LOG.critical("Interruptions: {}".format(config_dash.JSON_HANDLE['playback_info']['interruptions']['count']))
+        config_dash.LOG.critical("Interruption time total: {} s".format(config_dash.JSON_HANDLE['playback_info']['interruptions']['total_duration']))
 
     # waiting for the player to finish playing
     while dash_player.playback_state not in dash_buffer.EXIT_STATES:
@@ -582,6 +583,14 @@ def main():
     globals().update(vars(args))
     configure_log_file(playback_type=PLAYBACK.lower())
     config_dash.JSON_HANDLE['playback_type'] = PLAYBACK.lower()
+    if QUIC:
+        config_dash.JSON_HANDLE['transport'] = 'quic'
+    else: 
+        config_dash.JSON_HANDLE['transport'] = 'tcp'
+    if MP:
+        config_dash.JSON_HANDLE['scheduler'] = SCHEDULER
+    else:
+        config_dash.JSON_HANDLE['scheduler'] = 'singlePath'
     if not MPD:
         print "ERROR: Please provide the URL to the MPD file. Try Again.."
         return None

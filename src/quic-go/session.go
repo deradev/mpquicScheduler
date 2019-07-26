@@ -215,7 +215,7 @@ func (s *session) setup(
 		s.config.IdleTimeout,
 	)
 
-	s.scheduler = &scheduler{pathsRef: &s.paths,}
+	s.scheduler = &scheduler{pathsRef: &s.paths}
 	s.scheduler.setup()
 
 	if pconnMgr == nil && conn != nil {
@@ -325,7 +325,7 @@ func (s *session) run() error {
 
 	logStop := make(chan struct{})
 	if LogPayload {
-		logTicker := time.NewTicker(100 * time.Millisecond)
+		logTicker := time.NewTicker(1000 * time.Millisecond)
 		go s.scheduler.LogSendings(s, logTicker, logStop)
 	}
 
@@ -533,8 +533,8 @@ func (s *session) handleFrames(fs []wire.Frame, p *path) error {
 				}
 
 				logLine := strconv.FormatUint(uint64(frame.StreamID), 10) + ";" +
-				strconv.FormatUint(uint64(frame.Offset), 10) + ";" +
-				strconv.FormatInt(recvTime, 10) + "\n"
+					strconv.FormatUint(uint64(frame.Offset), 10) + ";" +
+					strconv.FormatInt(recvTime, 10) + "\n"
 				s.logLatFile.WriteString(logLine)
 			}
 		case *wire.AckFrame:
@@ -865,7 +865,7 @@ func (s *session) logPacket(packet *packedPacket, pathID protocol.PathID) {
 	utils.Debugf("-> Sending packet 0x%x (%d bytes) for connection %x on path %x, %s", packet.number, len(packet.raw), s.connectionID, pathID, packet.encryptionLevel)
 	for _, frame := range packet.frames {
 		wire.LogFrame(frame, true)
-		
+
 		if s.perspective == protocol.PerspectiveServer {
 			if _, isType := frame.(*wire.StreamFrame); isType {
 				logLine := strconv.FormatUint(uint64(frame.(*wire.StreamFrame).StreamID), 10) + ";" +
