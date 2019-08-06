@@ -65,6 +65,8 @@ type scheduler struct {
 	lowerRTTSchedules uint64
 	// Count the number of path switches by scheduler decision
 	pathSwitches uint64
+	// Count the number of CW blockings on the best path
+	cwBlocks uint64
 
 	// Paths for redundant resending
 	redundantPaths []*path
@@ -239,7 +241,7 @@ pathLoop:
 	return selectedPath
 }
 
-// utilRepair scheduler V0.3
+// utilRepair scheduler V0.4
 func (sch *scheduler) selectPathUtilRepair(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) *path {
 
 	var maxPath *path
@@ -267,11 +269,11 @@ pathLoop:
 			continue pathLoop
 		}
 
-		// Only use until the first smoothed RTT measurement is available
+		// Only use when the first smoothed RTT measurement is available
 		currentRTT := pth.rttStats.SmoothedRTT().Seconds()
 		currentCW := pth.sentPacketHandler.GetCongestionWindow()
 		if currentRTT > 0 {
-			currentTP = float64(currentCW) / currentRTT
+			currentTP = float64(currentCW)
 		}
 
 		pathStats = append(pathStats, pStat{pth, currentCW, currentRTT, currentTP})
@@ -310,6 +312,7 @@ pathLoop:
 	}
 
 	// Best path fully utilized, maybe transmit on another path
+	sch.cwBlocks++
 	if len(pathStats) > 1 {
 		// Sort paths descending based on throughput
 		sort.SliceStable(pathStats, func(i, j int) bool {
@@ -341,9 +344,10 @@ pathLoop:
 	return nil
 }
 
-// Select first path, that allows sending.
-func (sch *scheduler) selectFreePath(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) *path {
+// Select all paths for retransmission, or paths with space for new transmissions.
+func (sch *scheduler) selectRedundantPaths(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) *path {
 
+	var selectedPath *path
 pathLoop:
 	for pathID, pth := range s.paths {
 		// Don't block path usage if we retransmit, even on another path
@@ -363,38 +367,14 @@ pathLoop:
 			continue pathLoop
 		}
 
-		return pth
+		if selectedPath == nil {
+			selectedPath = pth
+		} else {
+			sch.redundantPaths = append(sch.redundantPaths, pth)
+		}
 	}
 
-	return nil
-}
-
-// Select all paths for retransmission, or paths with space for new transmissions.
-func (sch *scheduler) selectRedundantPaths(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) []*path {
-
-	var selectedPaths []*path
-
-pathLoop:
-	for pathID, pth := range s.paths {
-		// Don't block path usage if we retransmit, even on another path
-		if !hasRetransmission && !pth.SendingAllowed() {
-			continue pathLoop
-		}
-
-		// If this path is potentially failed, do no consider it for sending
-		if pth.potentiallyFailed.Get() {
-			continue pathLoop
-		}
-
-		// XXX Prevent using initial pathID if multiple paths
-		if pathID == protocol.InitialPathID {
-			continue pathLoop
-		}
-
-		selectedPaths = append(selectedPaths, pth)
-	}
-
-	return selectedPaths
+	return selectedPath
 }
 
 // Exclude initial path from selection and discovery of new paths.
@@ -428,9 +408,9 @@ func (sch *scheduler) selectInitialPath(s *session, hasRetransmission bool, hasS
 
 // Lock of s.paths must be held
 func (sch *scheduler) selectPath(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) *path {
-	// XXX Currently round-robin
-	// TODO select the right scheduler dynamically
 
+	// DERA: Reset redundant path selection.
+	sch.redundantPaths = nil
 	// DERA: Initial selection excludes the initial Path 0 and deploys new paths.
 	pth := sch.selectInitialPath(s, hasRetransmission, hasStreamRetransmission, fromPth)
 	if pth != nil {
@@ -445,12 +425,10 @@ func (sch *scheduler) selectPath(s *session, hasRetransmission bool, hasStreamRe
 	case "RR":
 		return sch.selectPathRoundRobin(s, hasRetransmission, hasStreamRetransmission, fromPth)
 	case "oppRedundant":
-		// Select free paths for redundant duplication
-		sch.redundantPaths = sch.selectRedundantPaths(s, hasRetransmission, hasStreamRetransmission, fromPth)
-		// Select any free-to-send path
-		return sch.selectFreePath(s, hasRetransmission, hasStreamRetransmission, fromPth)
+		// Select any free-to-send path for sending and all others as redundant paths.
+		return sch.selectRedundantPaths(s, hasRetransmission, hasStreamRetransmission, fromPth)
 	case "utilRepair":
-		// Select path with the potentially highest bandwidth
+		// Utilize path with the highest throughput.
 		return sch.selectPathUtilRepair(s, hasRetransmission, hasStreamRetransmission, fromPth)
 	default:
 		// Error invalid scheduling algorithm
@@ -571,17 +549,8 @@ func (sch *scheduler) sendPacket(s *session) error {
 		s.pathsLock.RUnlock()
 
 		// Update latest scheduler decision
-		if sch.lastPath != pth {
-			lastID := -1
-			if sch.lastPath != nil {
-				lastID = int(sch.lastPath.pathID)
-			}
-			newID := -1
-			if pth != nil {
-				newID = int(pth.pathID)
-			}
+		if sch.lastPath != pth && sch.lastPath != nil {
 			sch.pathSwitches++
-			utils.Infof("Switched path %d -> %d", lastID, newID)
 		}
 		sch.lastPath = pth
 
@@ -691,7 +660,6 @@ func (sch *scheduler) redSendPacket(s *session, pth *path, pkt *ackhandler.Packe
 			utils.Infof("No RED Frames")
 		}
 		// Prevent duplicating empty packets
-		sch.redundantPaths = nil
 		return sch.ackRemainingPaths(s, WUFs)
 	}
 
@@ -702,6 +670,12 @@ func (sch *scheduler) redSendPacket(s *session, pth *path, pkt *ackhandler.Packe
 		// Clone duplicable Frames from packet
 		encLevel, sealer := s.packer.cryptoSetup.GetSealer()
 		publicHeader := s.packer.getPublicHeader(encLevel, redPth)
+
+		// Was the packet already duplicated on this path?
+		if _, exists := sch.dupPackets[dupID{pth.pathID, pkt.PacketNumber}]; exists {
+			continue
+		}
+
 		raw, err := s.packer.writeAndSealPacket(publicHeader, redundantFrames, sealer, redPth)
 		if err != nil {
 			continue
@@ -730,7 +704,6 @@ func (sch *scheduler) redSendPacket(s *session, pth *path, pkt *ackhandler.Packe
 		sch.duplicatedStreamBytes += pkt.GetStreamFrameLength()
 	}
 
-	sch.redundantPaths = nil
 	return nil
 }
 
@@ -839,6 +812,20 @@ func (sch *scheduler) logRedundantStats(s *session) {
 	}
 	utils.Debugf("Total redundant droppings %d/%d (%f %%)", sch.droppedDuplicatedPackets, sch.duplicatedPackets, dropQuota)
 
+	pathStats := "["
+	for pathID, pth := range s.paths {
+		packets, retransmissions, losses, sentStreamFrameBytes := pth.sentPacketHandler.GetStatistics()
+		pathStats += " { \"pathID\": " + strconv.FormatUint(uint64(pathID), 10) +
+			", \"pathIP\" : \"" + pth.conn.LocalAddr().String() + "\"" +
+			", \"sendPackets\" : " + strconv.FormatUint(packets, 10) +
+			", \"retransmissions\" : " + strconv.FormatUint(retransmissions, 10) +
+			", \"losses\" : " + strconv.FormatUint(losses, 10) +
+			", \"sentStreamFrameBytes\" : " + strconv.FormatUint(sentStreamFrameBytes, 10) +
+			"},"
+	}
+	pathStats = pathStats[0 : len(pathStats)-1]
+	pathStats += "]"
+
 	logStatsFile.WriteString(
 		"{ \"totalSentPackets\" : " + strconv.FormatUint(s.allSntPackets, 10) +
 			", \"duplicatedPackets\" : " + strconv.FormatUint(sch.duplicatedPackets, 10) +
@@ -847,8 +834,10 @@ func (sch *scheduler) logRedundantStats(s *session) {
 			", \"totalStreamBytes\" : " + strconv.FormatUint(sch.allSntBytes, 10) +
 			", \"duplicatedStreamBytes\" : " + strconv.FormatUint(sch.duplicatedStreamBytes, 10) +
 			", \"duplicateStreamRate\" : " + strconv.FormatFloat(dupQuota, 'g', -1, 64) +
+			", \"blockedCWhighestTPPath\" : " + strconv.FormatUint(sch.cwBlocks, 10) +
 			", \"lowerRTTSchedules\" : " + strconv.FormatUint(sch.lowerRTTSchedules, 10) +
 			", \"pathSwitches\" : " + strconv.FormatUint(sch.pathSwitches, 10) +
+			", \"pathStats\" : " + pathStats +
 			"}")
 
 	logStatsFile.Close()

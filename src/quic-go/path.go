@@ -236,7 +236,7 @@ func (p *path) handlePacketImpl(pkt *receivedPacket) error {
 		return err
 	}
 
-	return p.sess.handleFrames(packet.frames, p)
+	return p.sess.handleFrames(packet.frames, p, pkt.rcvTime)
 }
 
 func (p *path) onRTO(lastSentTime time.Time) bool {

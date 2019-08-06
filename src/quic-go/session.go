@@ -516,8 +516,7 @@ func (s *session) handlePacketImpl(p *receivedPacket) error {
 	return pth.handlePacketImpl(p)
 }
 
-func (s *session) handleFrames(fs []wire.Frame, p *path) error {
-	recvTime := time.Now().UnixNano()
+func (s *session) handleFrames(fs []wire.Frame, p *path, rcvTime time.Time) error {
 	for _, ff := range fs {
 		var err error
 		wire.LogFrame(ff, false)
@@ -534,7 +533,7 @@ func (s *session) handleFrames(fs []wire.Frame, p *path) error {
 
 				logLine := strconv.FormatUint(uint64(frame.StreamID), 10) + ";" +
 					strconv.FormatUint(uint64(frame.Offset), 10) + ";" +
-					strconv.FormatInt(recvTime, 10) + "\n"
+					strconv.FormatInt(rcvTime.UnixNano(), 10) + "\n"
 				s.logLatFile.WriteString(logLine)
 			}
 		case *wire.AckFrame:
