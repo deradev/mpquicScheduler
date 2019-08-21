@@ -31,6 +31,9 @@ const (
 	minRetransmissionTime = 200 * time.Millisecond
 	// Minimum tail loss probe time in ms
 	minTailLossProbeTimeout = 10 * time.Millisecond
+
+	// Bufferbloatmitigation parameter
+	bufferbloatMitigationLambda = 9.0
 )
 
 var (
@@ -539,6 +542,23 @@ func (h *sentPacketHandler) SendingAllowed() bool {
 	// to RTOs, but we currently don't have a nice way of distinguishing them.
 	haveRetransmissions := len(h.retransmissionQueue) > 0
 	return !maxTrackedLimited && (!congestionLimited || haveRetransmissions)
+}
+
+func (h *sentPacketHandler) CongestionFree() bool {
+
+	congestionLimited := h.bytesInFlight > h.congestion.GetCongestionWindow()
+	maxTrackedLimited := protocol.PacketNumber(len(h.retransmissionQueue)+h.packetHistory.Len()) >= protocol.MaxTrackedSentPackets
+	return !congestionLimited && !maxTrackedLimited
+}
+
+func (h *sentPacketHandler) OvershootFree() bool {
+
+	// Bufferbloat mitigation algorithm
+	congestionWindow := h.congestion.GetCongestionWindow()
+	sRTT := h.rttStats.SmoothedRTT().Seconds()
+	minRTT := h.rttStats.MinRTT().Seconds()
+	overshootLimit := protocol.ByteCount(bufferbloatMitigationLambda * (minRTT / sRTT) * float64(congestionWindow))
+	return h.bytesInFlight < overshootLimit
 }
 
 func (h *sentPacketHandler) retransmitTLP() {

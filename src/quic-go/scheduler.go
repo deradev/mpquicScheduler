@@ -4,6 +4,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/lucas-clemente/quic-go/ackhandler"
@@ -15,10 +16,12 @@ import (
 var (
 	// SchedulerAlgorithm is the algorithm for packet -> path scheduling
 	SchedulerAlgorithm string
+	// RedundantSending is activated for certain schedulers
+	RedundantSending bool
+	// CongestionControl can be set to 'olia' or 'cubic', default is uncoupled Cubic
+	CongestionControl string
 	// LogPayload indicates if send goodput Bytes should be logged to file
 	LogPayload = true
-	// CongestionControl can be set to 'cubic', default is OLIA
-	CongestionControl string
 )
 
 // SetSchedulerAlgorithm is used to adapt the scheduler
@@ -26,6 +29,7 @@ func SetSchedulerAlgorithm(scheduler string) {
 	s := make([]byte, len(scheduler))
 	copy(s, scheduler)
 	SchedulerAlgorithm = string(s)
+	RedundantSending = SchedulerAlgorithm == "oppRedundant" || SchedulerAlgorithm == "utilRepair"
 }
 
 // SetCongestionControl is used to set the CC algorithm
@@ -58,8 +62,6 @@ type scheduler struct {
 
 	// Track which path was used for last schedule
 	lastPath *path
-	// bestTP keeps track of throughput from best path
-	bestTP float64
 
 	// Count the number of lower RTT path selection for debugging purposes in utilRepair
 	lowerRTTSchedules uint64
@@ -67,6 +69,9 @@ type scheduler struct {
 	pathSwitches uint64
 	// Count the number of CW blockings on the best path
 	cwBlocks uint64
+	// Count the number of each path selected as best path
+	bestPathSelection map[protocol.PathID]uint64
+	pathLogMapSync    sync.RWMutex
 
 	// Paths for redundant resending
 	redundantPaths []*path
@@ -81,6 +86,7 @@ type scheduler struct {
 func (sch *scheduler) setup() {
 	sch.quotas = make(map[protocol.PathID]uint)
 	sch.dupPackets = make(map[dupID]dupID)
+	sch.bestPathSelection = make(map[protocol.PathID]uint64)
 }
 
 func (sch *scheduler) getRetransmission(s *session) (hasRetransmission bool, retransmitPacket *ackhandler.Packet, pth *path) {
@@ -306,8 +312,12 @@ pathLoop:
 		return nil
 	}
 
+	sch.pathLogMapSync.RLock()
+	sch.bestPathSelection[maxPath.pathID]++
+	sch.pathLogMapSync.RUnlock()
+
 	// Utilize capacity of best path
-	if maxPath.SendingAllowed() {
+	if maxPath.sentPacketHandler.CongestionFree() && maxPath.sentPacketHandler.OvershootFree() {
 		return maxPath
 	}
 
@@ -324,16 +334,17 @@ pathLoop:
 		// Send on path with next highest throughput
 		var lowerRTTpath *path
 		for _, pStat := range pathStats {
-			if pStat.path.SendingAllowed() {
+			if pStat.path.sentPacketHandler.CongestionFree() {
+				sch.redundantPaths = append(sch.redundantPaths, pStat.path)
 				if pStat.RTT < maxRTT {
-					// Sending packet on lower RTT path than maxPath will not degradate throughput from maxPath
+					// Sending packet on lower RTT path with lower throughput than maxPath
 					if lowerRTTpath == nil {
 						lowerRTTpath = pStat.path
 						sch.lowerRTTSchedules++
 					}
 				} else {
 					// Replicate next packet on path, which otherwise idles.
-					// Happens on performance domination (maxPath: lower RTT & higher throughput)
+					// Happens on performance domination (maxPath has lower RTT & higher throughput)
 					sch.redundantPaths = append(sch.redundantPaths, pStat.path)
 				}
 			}
@@ -612,13 +623,10 @@ func (sch *scheduler) sendPacket(s *session) error {
 			return sch.ackRemainingPaths(s, windowUpdateFrames)
 		}
 
-		// Indicate to replicate send packet on redundant paths
-		redundantSending := SchedulerAlgorithm == "oppRedundant" || SchedulerAlgorithm == "utilRepair"
-
 		// Duplicate traffic when it was sent on an unknown performing path
 		// FIXME adapt for new paths coming during the connection
 		// DERA: redundant schedulers will duplicate packet anyways.
-		if pth.rttStats.SmoothedRTT() == 0 && !redundantSending {
+		if pth.rttStats.SmoothedRTT() == 0 && !RedundantSending {
 			currentQuota := sch.quotas[pth.pathID]
 			// Was the packet duplicated on all potential paths?
 		duplicateLoop:
@@ -634,7 +642,7 @@ func (sch *scheduler) sendPacket(s *session) error {
 			}
 		}
 		// Redundant retranmissions
-		if redundantSending {
+		if RedundantSending {
 			err := sch.redSendPacket(s, pth, pkt, windowUpdateFrames)
 			if err != nil {
 				return err
@@ -812,6 +820,7 @@ func (sch *scheduler) logRedundantStats(s *session) {
 	}
 	utils.Debugf("Total redundant droppings %d/%d (%f %%)", sch.droppedDuplicatedPackets, sch.duplicatedPackets, dropQuota)
 
+	sch.pathLogMapSync.RLock()
 	pathStats := "["
 	for pathID, pth := range s.paths {
 		packets, retransmissions, losses, sentStreamFrameBytes := pth.sentPacketHandler.GetStatistics()
@@ -821,10 +830,12 @@ func (sch *scheduler) logRedundantStats(s *session) {
 			", \"retransmissions\" : " + strconv.FormatUint(retransmissions, 10) +
 			", \"losses\" : " + strconv.FormatUint(losses, 10) +
 			", \"sentStreamFrameBytes\" : " + strconv.FormatUint(sentStreamFrameBytes, 10) +
+			", \"selectedAsBestPath\" : " + strconv.FormatUint(sch.bestPathSelection[pathID], 10) +
 			"},"
 	}
 	pathStats = pathStats[0 : len(pathStats)-1]
 	pathStats += "]"
+	sch.pathLogMapSync.RUnlock()
 
 	logStatsFile.WriteString(
 		"{ \"totalSentPackets\" : " + strconv.FormatUint(s.allSntPackets, 10) +

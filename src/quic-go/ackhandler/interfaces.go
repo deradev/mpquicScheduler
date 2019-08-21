@@ -18,6 +18,8 @@ type SentPacketHandler interface {
 	SetInflightAsLost()
 
 	SendingAllowed() bool
+	CongestionFree() bool
+	OvershootFree() bool
 	GetStopWaitingFrame(force bool) *wire.StopWaitingFrame
 	ShouldSendRetransmittablePacket() bool
 	DequeuePacketForRetransmission() (packet *Packet)
