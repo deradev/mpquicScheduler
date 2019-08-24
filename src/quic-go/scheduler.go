@@ -317,7 +317,7 @@ pathLoop:
 	sch.pathLogMapSync.RUnlock()
 
 	// Utilize capacity of best path
-	if maxPath.sentPacketHandler.CongestionFree() && maxPath.sentPacketHandler.OvershootFree() {
+	if maxPath.sentPacketHandler.CongestionFree() && maxPath.sentPacketHandler.OvershootFree(len(pathStats)) {
 		return maxPath
 	}
 

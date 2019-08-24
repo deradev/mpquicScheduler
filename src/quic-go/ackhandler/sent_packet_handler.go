@@ -3,6 +3,7 @@ package ackhandler
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/lucas-clemente/quic-go/congestion"
@@ -32,8 +33,8 @@ const (
 	// Minimum tail loss probe time in ms
 	minTailLossProbeTimeout = 10 * time.Millisecond
 
-	// Bufferbloatmitigation parameter
-	bufferbloatMitigationLambda = 9.0
+	// Bufferbloat mitigation base parameter lambda
+	bmLambdaBase = 3.0
 )
 
 var (
@@ -551,13 +552,14 @@ func (h *sentPacketHandler) CongestionFree() bool {
 	return !congestionLimited && !maxTrackedLimited
 }
 
-func (h *sentPacketHandler) OvershootFree() bool {
+func (h *sentPacketHandler) OvershootFree(pathNum int) bool {
 
 	// Bufferbloat mitigation algorithm
 	congestionWindow := h.congestion.GetCongestionWindow()
-	sRTT := h.rttStats.SmoothedRTT().Seconds()
 	minRTT := h.rttStats.MinRTT().Seconds()
-	overshootLimit := protocol.ByteCount(bufferbloatMitigationLambda * (minRTT / sRTT) * float64(congestionWindow))
+	sRTT := h.rttStats.SmoothedRTT().Seconds()
+	lambda := math.Pow(bmLambdaBase, float64(pathNum))
+	overshootLimit := protocol.ByteCount(lambda * (minRTT / sRTT) * float64(congestionWindow))
 	return h.bytesInFlight < overshootLimit
 }
 
