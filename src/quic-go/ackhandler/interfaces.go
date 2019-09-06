@@ -19,7 +19,7 @@ type SentPacketHandler interface {
 
 	SendingAllowed() bool
 	CongestionFree() bool
-	OvershootFree(pathNum int) bool
+	OvershootFree() bool
 	GetStopWaitingFrame(force bool) *wire.StopWaitingFrame
 	ShouldSendRetransmittablePacket() bool
 	DequeuePacketForRetransmission() (packet *Packet)
