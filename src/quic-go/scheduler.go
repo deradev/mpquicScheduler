@@ -16,8 +16,6 @@ import (
 var (
 	// SchedulerAlgorithm is the algorithm for packet -> path scheduling
 	SchedulerAlgorithm string
-	// RedundantSending is activated for certain schedulers
-	RedundantSending bool
 	// CongestionControl can be set to 'olia' or 'cubic', default is uncoupled Cubic
 	CongestionControl string
 	// LogPayload indicates if send goodput Bytes should be logged to file
@@ -29,7 +27,6 @@ func SetSchedulerAlgorithm(scheduler string) {
 	s := make([]byte, len(scheduler))
 	copy(s, scheduler)
 	SchedulerAlgorithm = string(s)
-	RedundantSending = SchedulerAlgorithm == "oppRedundant" || SchedulerAlgorithm == "utilRepair"
 }
 
 // SetCongestionControl is used to set the CC algorithm
@@ -317,7 +314,7 @@ pathLoop:
 	sch.pathLogMapSync.RUnlock()
 
 	// Utilize capacity of best path
-	if maxPath.sentPacketHandler.CongestionFree() && maxPath.sentPacketHandler.OvershootFree() {
+	if maxPath.sentPacketHandler.OvershootFree() {
 		return maxPath
 	}
 
@@ -626,7 +623,8 @@ func (sch *scheduler) sendPacket(s *session) error {
 		// Duplicate traffic when it was sent on an unknown performing path
 		// FIXME adapt for new paths coming during the connection
 		// DERA: redundant schedulers will duplicate packet anyways.
-		if pth.rttStats.SmoothedRTT() == 0 && !RedundantSending {
+		redundantSending := SchedulerAlgorithm == "oppRedundant" || SchedulerAlgorithm == "utilRepair"
+		if pth.rttStats.SmoothedRTT() == 0 && !redundantSending {
 			currentQuota := sch.quotas[pth.pathID]
 			// Was the packet duplicated on all potential paths?
 		duplicateLoop:
@@ -642,7 +640,7 @@ func (sch *scheduler) sendPacket(s *session) error {
 			}
 		}
 		// Redundant retranmissions
-		if RedundantSending {
+		if redundantSending {
 			err := sch.redSendPacket(s, pth, pkt, windowUpdateFrames)
 			if err != nil {
 				return err
