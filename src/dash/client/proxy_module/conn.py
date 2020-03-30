@@ -1,8 +1,8 @@
 from ctypes import *
-from os.path import expanduser
+import os.path
 
-home = expanduser("~")
-lib = cdll.LoadLibrary(home + "/dash/client/proxy_module.so")
+current_dir_path = os.path.dirname(os.path.realpath(__file__))
+lib = cdll.LoadLibrary(current_dir_path + "/proxy_module.so")
 
 class GoSlice(Structure):
     _fields_ = [("data", POINTER(c_void_p)), 

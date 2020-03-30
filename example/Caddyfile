@@ -1,0 +1,16 @@
+
+# Sample Caddyfile
+#
+# Defines two listeners (unsecured & secured) that host the example/video directory.
+#
+
+# Unsecure listener for debugging purposes
+http://localhost:4040 {
+    root example/video/
+}
+
+# Secure listener, required for TLS and QUIC connections
+https://localhost:4242 {
+    root example/video/
+    tls self_signed
+}

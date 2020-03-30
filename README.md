@@ -28,6 +28,22 @@ Original implementations:
 * [src/dash/client/proxy_module](https://github.com/deradev/mpquicScheduler/tree/master/src/dash/client/proxy_module) is a Python module that allows to issue http requests via local MP-QUIC.
 Creating a Linux shared object (.so) allows bridging Go code into a Python module.
 
+Example video setup:
+* [example/video/big-buck-bunny](https://github.com/deradev/mpquicScheduler/tree/master/example/video/big-buck-bunny) contains a DASH-streamable video and a corresponding sample Caddyserver configuration file. The edited video resource is 'Big Buck Bunny' (c) copyright 2008, Blender Foundation / www.bigbuckbunny.org.
+
+## Quickstart (stream the *Big Buck Bunny* sample movie)
+```
+# Clone repository and build sources
+git clone https://github.com/deradev/mpquicScheduler
+cd mpquicScheduler
+./build.sh
+
+# Run Caddyserver with sample Caddyfile and Multipath-QUIC
+./src/dash/caddy/caddy -conf example/Caddyfile -quic -mp &
+# Run AStream client with sample video target and Multipath-QUIC
+python src/AStream/dist/client/dash_client.py -m "https://localhost:4242/big-buck-bunny/output_dash.mpd" -p 'basic' -q -mp
+```
+
 ## Build
 
 The Go code modules are build with Golang version 1.12.
@@ -42,7 +58,7 @@ go build ./...
 Notes: Go modules allow recursive build, this module must not necessarily be build explicitely.
 The MP-QUIC module can be used by other Go modules via reference in their go.mod.
 
-Build Caddy executable:
+Build Caddyserver executable:
 ```
 cd src/dash/caddy
 go build
@@ -66,7 +82,7 @@ cp src/dash/client/proxy_module/conn.py src/AStream/dist/client/
 ```
 
 #### Prepare Caddyserver
-For DASH video streaming Caddy needs setup to serve video chunks.
+For DASH video streaming Caddyserver needs setup to serve video chunks.
 A file named [*Caddyfile*](https://caddyserver.com/tutorial/caddyfile) must be configured to this end.
 Example Caddyfile:
 ```
@@ -77,12 +93,12 @@ https://localhost:4242 {
 ```
 
 #### Run Caddyserver
-Execute the created ELF64 from src/dash/caddy:
+Run the created executable from src/dash/caddy:
 ```
-# Run caddy on single path.
+# Run Caddyserver on single path.
 ./caddy -quic
 # Or run caddy with multipath and lowRTT scheduler.
-# Possible schedulers [ lowRTT, RR, oppRedundant ] default is lowRTT.
+# Possible schedulers [ lowRTT, RR, oppRedundant, utilRepair ] default is lowRTT.
 ./caddy -quic -mp -scheduler lowRTT
 ```
 
@@ -90,10 +106,10 @@ Execute the created ELF64 from src/dash/caddy:
 Run the AStream client from src/AStream:
 ```
 # Run AStream on single path.
-python AStream/dist/client/dash_client.py -m <SERVER URL> -p 'basic' -q
+python AStream/dist/client/dash_client.py -m <SERVER URL TO MPD> -p 'basic' -q
 # Or run caddy with multipath and lowRTT scheduler.
 # Possible schedulers [ lowRTT, RR, oppRedundant ].
-python AStream/dist/client/dash_client.py -m <SERVER URL> -p 'basic' -q -mp -s lowRTT
+python AStream/dist/client/dash_client.py -m <SERVER URL TO MPD> -p 'basic' -q -mp -s lowRTT
 ```
 
 ## References
@@ -102,3 +118,6 @@ This repository contains modified source code versions:
 * [MP-QUIC](https://github.com/qdeconinck/mp-quic)
 * [Caddyserver](https://github.com/caddyserver/caddy)
 * [AStream](https://github.com/pari685/AStream)
+
+This repository contains a cut version of the 'Big Buck Bunny' cinematic by the Blender Foundation:
+* [Big Buck Bunny](https://peach.blender.org/download/) (c) copyright 2008, Blender Foundation / www.bigbuckbunny.org
