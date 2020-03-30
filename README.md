@@ -39,7 +39,7 @@ cd mpquicScheduler
 ./build.sh
 
 # Run Caddyserver with sample Caddyfile and Multipath-QUIC
-./src/dash/caddy/caddy -conf example/Caddyfile -quic -mp &
+./src/dash/caddy/caddy -conf example/Caddyfile -quic -mp
 # Run AStream client with sample video target and Multipath-QUIC
 python src/AStream/dist/client/dash_client.py -m "https://localhost:4242/big-buck-bunny/output_dash.mpd" -p 'basic' -q -mp
 ```
