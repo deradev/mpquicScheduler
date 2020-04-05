@@ -231,7 +231,8 @@ def start_playback_smart(dp_object, domain, playback_type=None, download=False, 
         dp_object.video[bitrate] = read_mpd.get_url_list(dp_object.video[bitrate], video_segment_duration,
                                                          dp_object.playback_duration, bitrate)
 
-        if "$Bandwidth$" in dp_object.video[bitrate].initialization:
+        if (dp_object.video[bitrate].initialization is not None and 
+            "$Bandwidth$" in dp_object.video[bitrate].initialization):
             dp_object.video[bitrate].initialization = dp_object.video[bitrate].initialization.replace(
                 "$Bandwidth$", str(bitrate))
         media_urls = [dp_object.video[bitrate].initialization] + dp_object.video[bitrate].url_list

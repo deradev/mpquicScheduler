@@ -6,11 +6,13 @@
 
 # Unsecure listener for debugging purposes
 http://localhost:4040 {
-    root example/video/
+    root example/video/big-buck-bunny/
+    log stdout
 }
 
 # Secure listener, required for TLS and QUIC connections
 https://localhost:4242 {
-    root example/video/
+    root example/video/big-buck-bunny/
     tls self_signed
+    log stdout
 }

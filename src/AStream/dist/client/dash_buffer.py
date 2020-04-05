@@ -2,6 +2,7 @@ from __future__ import division
 import Queue
 import threading
 import time
+import math
 import csv
 import os
 import config_dash
@@ -23,7 +24,7 @@ class DashPlayer:
         self.segment_duration = segment_duration
         # Keep track of played segments,
         # segment_duration < 1s leads to measured time offcut
-        self.playback_count = int(video_length/float(segment_duration))
+        self.playback_count = int(math.ceil(video_length/float(segment_duration)))
         #print "video_length = {}".format(video_length)
         #print "segment_duration = {}".format(segment_duration)
         # Timers to keep track of playback time and the actual time
@@ -50,9 +51,10 @@ class DashPlayer:
         self.buffer_lock = threading.Lock()
         self.current_segment = None
         self.buffer_log_file = config_dash.BUFFER_LOG_FILENAME
-        config_dash.LOG.info("VideoLength={},segmentDuration={},MaxBufferSize={},InitialBuffer(secs)={},"
+        config_dash.LOG.info("VideoLength={},segmentDuration={},segmentCount={},MaxBufferSize={},InitialBuffer(secs)={},"
                              "BufferAlph(secs)={},BufferBeta(secs)={}".format(self.playback_duration,
                                                                               self.segment_duration,
+                                                                              self.playback_count,
                                                                               self.max_buffer_size, self.initial_buffer,
                                                                               self.alpha, self.beta))
 
